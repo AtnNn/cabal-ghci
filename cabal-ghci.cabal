@@ -25,7 +25,11 @@ Author:              Etienne Laurin
 Maintainer:          etienne@atnnn.com
 Category:            Development
 Build-type:          Simple
-Cabal-version:       >=1.2
+Cabal-version:       >=1.6
+
+Source-repository head
+    type: darcs
+    location: http://code.atnnn.com/darcs/cabal-ghci/
 
 Executable cabal-ghci
   Main-is: CabalGHCI.hs
@@ -34,5 +38,5 @@ Executable cabal-ghci
 
 Library
   Exposed-modules: Distribution.Dev.Interactive
-  Build-depends: Cabal, base, directory, filepath
+  Build-depends: Cabal, base == 4.*, directory, filepath
   extensions: UnicodeSyntax
