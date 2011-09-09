@@ -1,5 +1,13 @@
+-- | Retrieve ghci options for your cabal project
 module Distribution.Dev.Interactive ( 
-  cabalSet, packageOpts, loadCabal, lookForCabalFile, withOpts
+  -- * Installing into your .ghci
+  -- $install
+  
+  -- * Arguments
+  -- $args
+  
+  -- * Exported functions
+  cabalSet, packageOpts, loadCabal, lookForCabalFile, withOpts, LoadCabalRet(..)
   ) where
 
 import Distribution.Text
@@ -16,17 +24,22 @@ import System.Directory
 import System.Info
 import Data.Maybe
 
+-- | Return value for 'loadCabal'
 data LoadCabalRet =
-  NoCabalFile |
-  MissingDeps [Dependency] |
-  Pkg FilePath PackageDescription
+  NoCabalFile | -- ^ No cabal file found
+  MissingDeps [Dependency] | -- ^ Missing dependencies
+  Pkg FilePath PackageDescription -- ^ Successful loading and parsing of cabal file
   deriving Show
 
-pkgDescr (Pkg _ p) = p
-
+compiler ∷ CompilerId
 compiler = CompilerId buildCompilerFlavor compilerVersion
 
-packageOpts ∷ FilePath → PackageDescription → String → Maybe [String]
+-- | Build a list of ghci options needed to load files from a cabal project
+packageOpts
+  ∷ FilePath -- ^ path to the .cabal file
+  → PackageDescription -- ^ parsed package description
+  → String -- ^ name of executable
+  → Maybe [String]
 packageOpts path pkg executable =
   maybe Nothing (\bi → Just $ includeOpts path bi ++ extensionOpts bi ++ customOpts bi) $
   listToMaybe $
@@ -37,18 +50,25 @@ packageOpts path pkg executable =
       filter (\x → exeName x == executable) .
       executables $ pkg
 
+customOpts ∷ BuildInfo → [String]
 customOpts bi = 
   hcOptions buildCompilerFlavor bi
 
+extensionOpts ∷ BuildInfo → [String]
 extensionOpts bi =
   map (\x → "-X" ++ display x) $ allExtensions bi
 
+includeOpts ∷ FilePath → BuildInfo → [String]
 includeOpts path bi =
   ["-i" ++ dir ++ "/dist/build/autogen"] ++
   map (("-i"++) . combine dir) (hsSourceDirs bi)
    where dir = takeDirectory path
 
-loadCabal ∷ FilePath → FlagAssignment → IO LoadCabalRet
+-- | Load the current cabal project file and parse it
+loadCabal
+  ∷ FilePath -- ^ usually the current directory
+  → FlagAssignment -- ^ list of cabal flag assignments
+  → IO LoadCabalRet
 loadCabal path flags = do
   mCabalFile ← lookForCabalFile =<< canonicalizePath path
   flip (maybe (return NoCabalFile))
@@ -59,9 +79,10 @@ loadCabal path flags = do
         Left deps → return $ MissingDeps deps
         Right (descr, _) → return $ Pkg cabalFile descr
 
-ifM ∷ Monad m ⇒ m Bool → m a → m a → m a
-ifM a b c = a >>= \x → if x then b else c
-                                        
+-- | Find a .cabal file in the path or any of it's parent directories
+lookForCabalFile
+  ∷ FilePath -- ^ canonicalised path
+  → IO (Maybe FilePath)
 lookForCabalFile "/" = return Nothing
 lookForCabalFile path = do
   files ← getDirectoryContents path
@@ -73,13 +94,22 @@ lookForCabalFile path = do
     [a] → return $ Just $ combine path a
     _ → return Nothing
 
-cabalSet ∷ String → IO String
+-- | 'cabalSet' returns a list of ghci commands (seperated by newlines) that :set the 'packageOpts' of the current cabal project
+cabalSet
+  ∷ String -- ^ arguments seperated by spaces
+  → IO String
 cabalSet args =
   withOpts (words args)
     (\x → putStrLn x >> return "")
     ((\x → putStrLn x >> return x) .
         unlines . (map (":set "++)) . map show )
 
+-- | Generalised version of 'cabalSet'
+withOpts
+  ∷ [String] -- ^ List of cabal flag arguments and executable name
+  → (String → IO a) -- ^ Error continuation. Recieves an error message.
+  → ([String] → IO a) -- ^ Success continuation. Recieves a list of ghci arguments.
+  → IO a
 withOpts args err go = do
   let (flags, executable) = parseArgs args
   here ← getCurrentDirectory
@@ -96,11 +126,30 @@ withOpts args err go = do
           else "No library defined in cabal file")
         Just opts → go opts
 
+parseArgs ∷ [String] → (FlagAssignment, String)
 parseArgs args =
   (map (makeFlag . drop 2) . filter flag $ args, 
    fromMaybe "" . listToMaybe . filter (not . flag) $ args)
   where
     flag x = take 2 x == "-f"
         
+makeFlag ∷ String → (FlagName, Bool)
 makeFlag ('-':f) = (FlagName f, False)
 makeFlag f = (FlagName f, True)
+
+-- $install
+-- @
+--   $ head -n 4 >> ~/.ghci
+--   :m + Distribution.Dev.Interactive
+--   :def cabalset cabalSet
+--   :cabalset
+--   :m - Distribution.Dev.Interactive
+-- @
+
+-- $args
+-- [@-fflag@] enable flag
+-- 
+-- [@-f-flag@] disable flag
+-- 
+-- [@exec@] load options for the exec executable
+
