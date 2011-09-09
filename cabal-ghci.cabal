@@ -18,7 +18,7 @@ Description:
   :set "-XTypeFamilies"
   :set "-XQuasiQuotes"
 
-Homepage:            http://code.atnnn.com/projects/cabal-ghci
+Homepage:            http://code.atnnn.com/projects/cabal-ghci/wiki
 License:             BSD3
 License-file:        LICENSE
 Author:              Etienne Laurin
