@@ -18,17 +18,25 @@ import Distribution.Package
 import Distribution.PackageDescription
 import Distribution.PackageDescription.Parse
 import Distribution.PackageDescription.Configuration
+import Distribution.Simple.PackageIndex
+import Distribution.Simple.LocalBuildInfo hiding (compiler)
+import Data.Version
 
 import System.FilePath
 import System.Directory
 import System.Info
 import Data.Maybe
+import Data.Either
+import Control.Exception
+import Data.List
+
+type Deps = [(PackageName, Version)]
 
 -- | Return value for 'loadCabal'
 data LoadCabalRet =
   NoCabalFile | -- ^ No cabal file found
   MissingDeps [Dependency] | -- ^ Missing dependencies
-  Pkg FilePath PackageDescription -- ^ Successful loading and parsing of cabal file
+  Pkg FilePath PackageDescription (Maybe LocalBuildInfo) -- ^ Successful loading and parsing of cabal file
   deriving Show
 
 compiler ∷ CompilerId
@@ -38,10 +46,11 @@ compiler = CompilerId buildCompilerFlavor compilerVersion
 packageOpts
   ∷ FilePath -- ^ path to the .cabal file
   → PackageDescription -- ^ parsed package description
+  → Maybe LocalBuildInfo -- ^ parsed build config
   → String -- ^ name of executable
   → Maybe [String]
-packageOpts path pkg executable =
-  maybe Nothing (\bi → Just $ includeOpts path bi ++ extensionOpts bi ++ customOpts bi) $
+packageOpts path pkg mlbi executable =
+  maybe Nothing (\bi → Just $ ghcOpts path bi (listDeps bi =<< mlbi)) $
   listToMaybe $
     if executable == ""
     then allBuildInfo pkg
@@ -50,19 +59,35 @@ packageOpts path pkg executable =
       filter (\x → exeName x == executable) .
       executables $ pkg
 
-customOpts ∷ BuildInfo → [String]
-customOpts bi = 
-  hcOptions buildCompilerFlavor bi
+listDeps ∷ BuildInfo → LocalBuildInfo → Maybe Deps
+listDeps bi lbi = sequence $ map find reqs 
+  where
+    reqs = targetBuildDepends bi
+    db = installedPkgs lbi
+    find dep@(Dependency pkg _) = do
+      (fst . head → ver) ← return $ lookupDependency db dep
+      return (pkg, ver)
 
-extensionOpts ∷ BuildInfo → [String]
-extensionOpts bi =
-  map (\x → "-X" ++ display x) $ allExtensions bi
-
-includeOpts ∷ FilePath → BuildInfo → [String]
-includeOpts path bi =
-  ["-i" ++ dir ++ "/dist/build/autogen"] ++
-  map (("-i"++) . combine dir) (hsSourceDirs bi)
-   where dir = takeDirectory path
+-- | GHC options for a 'BuildInfo'
+ghcOpts ∷ FilePath → BuildInfo → Maybe Deps → [String]
+ghcOpts path bi deps = concat $ 
+  maybe [] ((noPkgs:) . add "-package=" . map addDep) deps :
+  map ($ bi) [
+  hcOptions buildCompilerFlavor,
+  addf "-X" display . allExtensions,
+  addf "-i" (combine dir) . ("/dist/build/autogen":) . hsSourceDirs,
+  add "-optP" . cppOptions,
+  add "-optc" . ccOptions,
+  add "-optl" . ldOptions
+  -- TODO frameworks cSources otherModules extraLibs extraLibsDirs includes 
+  ]
+  where
+    dir = takeDirectory path
+    add s = map (s++)
+    addf ∷ String → (a → String) → [a] → [String]
+    addf s f = map ((s++) . f)
+    noPkgs = "-hide-all-packages"
+    addDep (PackageName pkg, showVersion → ver) = pkg ++ "-" ++ ver
 
 -- | Load the current cabal project file and parse it
 loadCabal
@@ -74,10 +99,28 @@ loadCabal path flags = do
   flip (maybe (return NoCabalFile))
     mCabalFile $ \cabalFile → do
     gdescr ← readPackageDescription normal cabalFile
+    mlbi ← loadCabalConfig (takeDirectory cabalFile `combine` "dist" `combine` "setup-config")
     case finalizePackageDescription flags (const True)
       buildPlatform compiler [] gdescr of
         Left deps → return $ MissingDeps deps
-        Right (descr, _) → return $ Pkg cabalFile descr
+        Right (descr, _) → return $ Pkg cabalFile descr mlbi
+
+maybeNth ∷ Int → [a] → Maybe a
+maybeNth 0 (x:_) = Just x
+maybeNth n (_:xs) = maybeNth (n-1) xs
+maybeNth _ _ = Nothing
+
+maybeRead s = case reads s of [(a, "")] → Just a; _ → Nothing
+
+-- | Load the 'LocalBuildInfo' from dist/setup-config
+loadCabalConfig ∷ FilePath → IO (Maybe LocalBuildInfo)
+loadCabalConfig path = 
+  -- TODO: don't ignore all exceptions
+  fmap (either ignore id) $ try $
+  fmap ((maybeRead =<<) . maybeNth 1 . lines) $ readFile path
+  where
+    ignore ∷ SomeException → Maybe a
+    ignore _ = Nothing
 
 -- | Find a .cabal file in the path or any of it's parent directories
 lookForCabalFile
@@ -117,8 +160,8 @@ withOpts args err go = do
   case ret of
     NoCabalFile → err "Current directory is not a cabal project"
     MissingDeps deps → err $ "Missing dependencies: " ++ unwords (map show deps)
-    Pkg path descr → do
-      let mopts = packageOpts path descr executable
+    Pkg path descr mlbi → do
+      let mopts = packageOpts path descr mlbi executable
       case mopts of
         Nothing → err (
           if executable /= ""
@@ -142,7 +185,7 @@ makeFlag f = (FlagName f, True)
 --   $ head -n 4 >> ~/.ghci
 --   :m + Distribution.Dev.Interactive
 --   :def cabalset cabalSet
---   :cabalset
+--   :cabalset -fcabal-ghci
 --   :m - Distribution.Dev.Interactive
 -- @
 
