@@ -10,25 +10,27 @@ module Distribution.Dev.Interactive (
   cabalSet, packageOpts, loadCabal, lookForCabalFile, withOpts, LoadCabalRet(..)
   ) where
 
-import Distribution.Text
-import Distribution.Compiler
-import Distribution.Verbosity
-import Distribution.System
-import Distribution.Package
-import Distribution.PackageDescription
-import Distribution.PackageDescription.Parse
-import Distribution.PackageDescription.Configuration
-import Distribution.Simple.PackageIndex
-import Distribution.Simple.LocalBuildInfo hiding (compiler)
-import Data.Version
+import Distribution.Text (display)
+import Distribution.Compiler (buildCompilerFlavor, CompilerId(..))
+import Distribution.Verbosity (normal)
+import Distribution.System (buildPlatform)
+import Distribution.Package (PackageName(..), Dependency(..))
+import Distribution.PackageDescription (
+  FlagName(..), FlagAssignment, BuildInfo(..), hcOptions, allExtensions,
+  PackageDescription(..), Executable(..), allBuildInfo)
+import Distribution.PackageDescription.Parse (readPackageDescription)
+import Distribution.PackageDescription.Configuration (
+  finalizePackageDescription)
+import Distribution.Simple.PackageIndex (lookupDependency)
+import Distribution.Simple.LocalBuildInfo (LocalBuildInfo, installedPkgs)
+import Data.Version (Version, showVersion)
 
-import System.FilePath
-import System.Directory
-import System.Info
-import Data.Maybe
-import Data.Either
-import Control.Exception
-import Data.List
+import System.FilePath (takeDirectory, (</>), takeExtension)
+import System.Directory (
+  getDirectoryContents, getCurrentDirectory, canonicalizePath)
+import System.Info (compilerVersion)
+import Data.Maybe (listToMaybe, fromMaybe)
+import Control.Exception (try, SomeException)
 
 type Deps = [(PackageName, Version)]
 
@@ -75,7 +77,7 @@ ghcOpts path bi deps = concat $
   map ($ bi) [
   hcOptions buildCompilerFlavor,
   addf "-X" display . allExtensions,
-  addf "-i" (combine dir) . ("/dist/build/autogen":) . hsSourceDirs,
+  addf "-i" (dir </>) . ("dist/build/autogen":) . hsSourceDirs,
   add "-optP" . cppOptions,
   add "-optc" . ccOptions,
   add "-optl" . ldOptions
@@ -99,7 +101,7 @@ loadCabal path flags = do
   flip (maybe (return NoCabalFile))
     mCabalFile $ \cabalFile → do
     gdescr ← readPackageDescription normal cabalFile
-    mlbi ← loadCabalConfig (takeDirectory cabalFile `combine` "dist" `combine` "setup-config")
+    mlbi ← loadCabalConfig (takeDirectory cabalFile </> "dist" </> "setup-config")
     case finalizePackageDescription flags (const True)
       buildPlatform compiler [] gdescr of
         Left deps → return $ MissingDeps deps
@@ -110,6 +112,8 @@ maybeNth 0 (x:_) = Just x
 maybeNth n (_:xs) = maybeNth (n-1) xs
 maybeNth _ _ = Nothing
 
+
+maybeRead ∷ Read a ⇒ String → Maybe a
 maybeRead s = case reads s of [(a, "")] → Just a; _ → Nothing
 
 -- | Load the 'LocalBuildInfo' from dist/setup-config
@@ -134,7 +138,7 @@ lookForCabalFile path = do
                         && f /= ".cabal") files
   case cabals of
     [] → lookForCabalFile (takeDirectory path)
-    [a] → return $ Just $ combine path a
+    [a] → return $ Just $ path </> a
     _ → return Nothing
 
 -- | 'cabalSet' returns a list of ghci commands (seperated by newlines) that :set the 'packageOpts' of the current cabal project
