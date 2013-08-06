@@ -24,6 +24,7 @@ import Distribution.PackageDescription.Configuration (
 import Distribution.Simple.PackageIndex (lookupDependency)
 import Distribution.Simple.LocalBuildInfo (LocalBuildInfo, installedPkgs)
 import Data.Version (Version, showVersion)
+import Distribution.Simple.BuildPaths (autogenModulesDir, cppHeaderName)
 
 import System.FilePath (takeDirectory, (</>), takeExtension)
 import System.Directory (
@@ -52,7 +53,7 @@ packageOpts
   → String -- ^ name of executable
   → Maybe [String]
 packageOpts path pkg mlbi executable =
-  maybe Nothing (\bi → Just $ ghcOpts path bi (listDeps bi =<< mlbi)) $
+  maybe Nothing (\bi → Just $ ghcOpts path bi mlbi (listDeps bi =<< mlbi)) $
   listToMaybe $
     if executable == ""
     then allBuildInfo pkg
@@ -71,25 +72,42 @@ listDeps bi lbi = sequence $ map find reqs
       return (pkg, ver)
 
 -- | GHC options for a 'BuildInfo'
-ghcOpts ∷ FilePath → BuildInfo → Maybe Deps → [String]
-ghcOpts path bi deps = concat $ 
+ghcOpts ∷ FilePath → BuildInfo → Maybe LocalBuildInfo → Maybe Deps → [String]
+ghcOpts path bi mlbi deps = filter validGHCiFlag $ concat $
   maybe [] ((noPkgs:) . add "-package=" . map addDep) deps :
   map ($ bi) [
   hcOptions buildCompilerFlavor,
   addf "-X" display . allExtensions,
-  addf "-i" (dir </>) . ("dist/build/autogen":) . hsSourceDirs,
+  addf "-i" (dir </>) . (autogendir:) . hsSourceDirs,
   add "-optP" . cppOptions,
   add "-optc" . ccOptions,
-  add "-optl" . ldOptions
-  -- TODO frameworks cSources otherModules extraLibs extraLibsDirs includes 
+  add "-optl" . ldOptions,
+  const ["-optP-include", "-optP" ++ (autogendir </> cppHeaderName)]
+  -- Other cabal settings currently ignored by cabal-ghci: 
+  -- frameworks cSources otherModules extraLibs extraLibsDirs includes
   ]
   where
-    dir = takeDirectory path
+    autogendir
+      | Just lbi ← mlbi = autogenModulesDir lbi
+      | otherwise = "dist/build/autogen"
+
+    dir
+      | s@(_:_) ← takeDirectory path = s
+      | otherwise = "."
     add s = map (s++)
     addf ∷ String → (a → String) → [a] → [String]
     addf s f = map ((s++) . f)
     noPkgs = "-hide-all-packages"
     addDep (PackageName pkg, showVersion → ver) = pkg ++ "-" ++ ver
+
+    -- flags sensible for GHCi
+    validGHCiFlag "-O" = False
+    validGHCiFlag ['-','O',n] | n `elem` ['0'..'9'] = False
+    validGHCiFlag "-debug" = False
+    validGHCiFlag "-rtsopts" = False
+    validGHCiFlag "-threaded" = False
+    validGHCiFlag "-ticky" = False
+    validGHCiFlag _ = True
 
 -- | Load the current cabal project file and parse it
 loadCabal
@@ -111,7 +129,6 @@ maybeNth ∷ Int → [a] → Maybe a
 maybeNth 0 (x:_) = Just x
 maybeNth n (_:xs) = maybeNth (n-1) xs
 maybeNth _ _ = Nothing
-
 
 maybeRead ∷ Read a ⇒ String → Maybe a
 maybeRead s = case reads s of [(a, "")] → Just a; _ → Nothing
@@ -202,4 +219,3 @@ makeFlag f = (FlagName f, True)
 -- [@-f-flag@] disable flag
 -- 
 -- [@exec@] load options for the exec executable
-
