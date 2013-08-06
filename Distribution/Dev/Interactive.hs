@@ -192,6 +192,9 @@ makeFlag f = (FlagName f, True)
 --   :cabalset -fcabal-ghci
 --   :m - Distribution.Dev.Interactive
 -- @
+-- 
+-- After you've added those lines into your .ghci file, use the @:cabalset@
+-- command to reload your .cabal file.
 
 -- $args
 -- [@-fflag@] enable flag
