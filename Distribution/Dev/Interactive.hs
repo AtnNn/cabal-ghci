@@ -79,6 +79,7 @@ ghcOpts path bi mlbi deps = filter validGHCiFlag $ concat $
   hcOptions buildCompilerFlavor,
   addf "-X" display . allExtensions,
   addf "-i" (dir </>) . (autogendir:) . hsSourceDirs,
+  addf "-I" (dir </>) . (autogendir:) . includeDirs,
   add "-optP" . cppOptions,
   add "-optc" . ccOptions,
   add "-optl" . ldOptions,
