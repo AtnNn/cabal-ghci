@@ -1,3 +1,5 @@
+**This tool is no longer maintained. I recomend using `cabal repl` or `stack ghci` instead**
+
 # cabal-ghci
 
 This haskell package lets you load options from your `.cabal` file into your ghci session. It offers both a `cabal-ghci` executable as a very simple wrapper around ghci, and the more powerful `:cabal-set` ghci command that can be added to your `.ghci`.
