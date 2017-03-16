@@ -11,7 +11,9 @@ module Distribution.Dev.Interactive (
   ) where
 
 import Distribution.Text (display)
-import Distribution.Compiler (buildCompilerFlavor, CompilerId(..))
+import Distribution.Compiler (
+  buildCompilerFlavor, CompilerId(..), CompilerInfo(..), AbiTag(..),
+  unknownCompilerInfo)
 import Distribution.Verbosity (normal)
 import Distribution.System (buildPlatform)
 import Distribution.Package (PackageName(..), Dependency(..))
@@ -42,8 +44,10 @@ data LoadCabalRet =
   Pkg FilePath PackageDescription (Maybe LocalBuildInfo) -- ^ Successful loading and parsing of cabal file
   deriving Show
 
-compiler ∷ CompilerId
-compiler = CompilerId buildCompilerFlavor compilerVersion
+compiler ∷ CompilerInfo
+compiler = unknownCompilerInfo compilerId NoAbiTag
+  where
+    compilerId = CompilerId buildCompilerFlavor compilerVersion
 
 -- | Build a list of ghci options needed to load files from a cabal project
 packageOpts
